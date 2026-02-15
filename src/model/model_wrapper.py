@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Protocol, runtime_checkable
 
+from model.ply_export import export_ply
 import moviepy.editor as mpy
 import torch
 import wandb
@@ -55,6 +56,7 @@ class TestCfg:
     compute_scores: bool
     save_image: bool
     save_video: bool
+    save_ply: bool
     eval_time_skip_steps: int
 
 
@@ -216,6 +218,23 @@ class ModelWrapper(LightningModule):
             save_video(
                 [a for a in images_prob],
                 path / "video" / f"{scene}_frame_{frame_str}.mp4",
+            )
+
+        if self.test_cfg.save_ply:
+            extrinsics = batch["target"]["extrinsics"][0]
+            means = gaussians.mean[0]
+            scales = gaussians.scale[0]
+            rotations = gaussians.rotation[0]
+            harmonics = gaussians.harmonics[0]
+            opacities = gaussians.opacity[0]
+            export_ply(
+                extrinsics,
+                means,
+                scales,
+                rotations,
+                harmonics,
+                opacities,
+                self.test_cfg.output_path / name / "ply" / f"{scene}_{batch_idx}.ply",
             )
 
         # compute scores
