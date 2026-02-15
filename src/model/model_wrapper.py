@@ -255,7 +255,7 @@ class ModelWrapper(LightningModule):
             rotations = torch.from_numpy(r.as_quat()).to(gaussians.means.device)
 
             harmonics = gaussians.harmonics[0]
-            opacities = gaussians.opacity[0]
+            opacities = gaussians.opacities[0]
             export_ply(
                 extrinsics,
                 means,
