@@ -32,6 +32,9 @@ def export_ply(
     opacities: Float[Tensor, " gaussian"],
     path: Path,
 ):
+    # SH DC coefficient constant
+    C0 = 0.28209479177387814
+    
     # Shift the scene so that the median Gaussian is at the origin.
     means = means - means.median(dim=0).values
 
@@ -72,17 +75,25 @@ def export_ply(
     x, y, z, w = rearrange(rotations, "g xyzw -> xyzw g")
     rotations = np.stack((w, x, y, z), axis=-1)
 
-    # Since our axes are swizzled for the spherical harmonics, we only export the DC
-    # band.
-    harmonics_view_invariant = harmonics[..., 0]
+    # Prepare Spherical Harmonics (DC Component)
+    # harmonics shape is [G, 3, d_sh]. We want the first coefficient for each channel.
+    # Note: Some models store SH as [G, d_sh, 3], adjust if necessary.
+    sh_dc = harmonics[..., 0]
 
+    # Prepare Opacity (applying sigmoid if your model outputs raw logits)
+    # opacities = torch.sigmoid(opacities) # Uncomment if model outputs logits
+    opacity = opacities[..., None].detach().cpu().numpy()
+
+    # Final attribute assembly
+    # Standard GS PLY format: x, y, z, nx, ny, nz, f_dc_0, f_dc_1, f_dc_2, [f_rest], opacity, scale_0..., rot_0...
     dtype_full = [(attribute, "f4") for attribute in construct_list_of_attributes(0)]
     elements = np.empty(means.shape[0], dtype=dtype_full)
+
     attributes = (
         means.detach().cpu().numpy(),
         torch.zeros_like(means).detach().cpu().numpy(),
-        harmonics_view_invariant.detach().cpu().contiguous().numpy(),
-        opacities[..., None].detach().cpu().numpy(),
+        sh_dc.detach().cpu().numpy(),
+        opacity,
         scales.log().detach().cpu().numpy(),
         rotations,
     )
