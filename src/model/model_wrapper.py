@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Protocol, runtime_checkable
 
-from model.ply_export import export_ply
+from ..model.ply_export import export_ply
 import moviepy.editor as mpy
 import torch
 import wandb
