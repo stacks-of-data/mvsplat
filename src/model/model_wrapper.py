@@ -233,8 +233,8 @@ class ModelWrapper(LightningModule):
             # Move to CPU for the decomposition (much more stable than CUDA eigh)
             L, V = torch.linalg.eigh(stable_covs.to("cpu"))
 
-            # Move back to GPU if needed for further processing
-            # L, V = L.to(covs.device), V.to(covs.device)
+            # Move back to GPU for further processing
+            L, V = L.to(covs.device), V.to(covs.device)
             scales = torch.sqrt(torch.clamp(L, min=1e-8))
 
             # FIX: Ensure Right-Handed Rotation Matrix
