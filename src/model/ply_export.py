@@ -11,17 +11,25 @@ from torch import Tensor
 
 def construct_list_of_attributes(num_rest: int) -> list[str]:
     attributes = ["x", "y", "z", "nx", "ny", "nz"]
+    # Standard SH fields
     for i in range(3):
         attributes.append(f"f_dc_{i}")
     for i in range(num_rest):
         attributes.append(f"f_rest_{i}")
     attributes.append("opacity")
+    # Scaling and Rotation
     for i in range(3):
         attributes.append(f"scale_{i}")
     for i in range(4):
         attributes.append(f"rot_{i}")
+    # Standard RGB fields for general viewers
+    attributes.append("red")
+    attributes.append("green")
+    attributes.append("blue")
     return attributes
 
+def SH2RGB(sh):
+    return sh * 0.28209479177387814 + 0.5
 
 def export_ply(
     extrinsics: Float[Tensor, "4 4"],
@@ -84,20 +92,38 @@ def export_ply(
     # opacities = torch.sigmoid(opacities) # Uncomment if model outputs logits
     opacity = opacities[..., None].detach().cpu().numpy()
 
-    # Final attribute assembly
-    # Standard GS PLY format: x, y, z, nx, ny, nz, f_dc_0, f_dc_1, f_dc_2, [f_rest], opacity, scale_0..., rot_0...
-    dtype_full = [(attribute, "f4") for attribute in construct_list_of_attributes(0)]
-    elements = np.empty(means.shape[0], dtype=dtype_full)
+    colors_rgb = SH2RGB(sh_dc).detach().cpu().numpy()
+    colors_rgb = (np.clip(colors_rgb, 0, 1) * 255).astype(np.uint8)
 
-    attributes = (
+    attribute_names = construct_list_of_attributes(0)
+    
+    # Coordinates, SH, Opacity, Scale, Rot are float32 ('f4')
+    # Red, Green, Blue are uint8 ('u1')
+    v_list = [(name, "f4") for name in attribute_names[:-3]]
+    v_list += [(name, "u1") for name in attribute_names[-3:]]
+    
+    elements = np.empty(means.shape[0], dtype=v_list)
+
+    # 4. Concatenate and convert to list of tuples
+    # We keep the floats and uint8s separate for the stack, 
+    # then map them into the structured array
+    attributes_float = np.concatenate([
         means.detach().cpu().numpy(),
-        torch.zeros_like(means).detach().cpu().numpy(),
+        torch.zeros_like(means).detach().cpu().numpy(), # normals
         sh_dc.detach().cpu().numpy(),
         opacity,
         scales.log().detach().cpu().numpy(),
         rotations,
-    )
-    attributes = np.concatenate(attributes, axis=1)
-    elements[:] = list(map(tuple, attributes))
+    ], axis=1)
+
+    # Fill the structured array
+    for i, name in enumerate(attribute_names[:-3]):
+        elements[name] = attributes_float[:, i]
+    
+    elements["red"] = colors_rgb[:, 0]
+    elements["green"] = colors_rgb[:, 1]
+    elements["blue"] = colors_rgb[:, 2]
+
+    # 5. Save
     path.parent.mkdir(exist_ok=True, parents=True)
     PlyData([PlyElement.describe(elements, "vertex")]).write(path)
