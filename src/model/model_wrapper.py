@@ -234,16 +234,26 @@ class ModelWrapper(LightningModule):
             L, V = torch.linalg.eigh(stable_covs.to("cpu"))
 
             # Move back to GPU if needed for further processing
-            L, V = L.to(covs.device), V.to(covs.device)
+            # L, V = L.to(covs.device), V.to(covs.device)
             scales = torch.sqrt(torch.clamp(L, min=1e-8))
+
+            # FIX: Ensure Right-Handed Rotation Matrix
+            # Check the determinant of the eigenvector matrix V
+            # V is [gaussian, 3, 3] where each [3, 3] is the rotation matrix
+            det = torch.linalg.det(V)
+
+            # If determinant is -1, flip the last column to make it a proper rotation
+            # (det < 0) identifies the left-handed cases
+            flip_mask = det < 0
+            V[flip_mask, :, 2] *= -1
 
             # Extract Rotations (Matrix to Quaternion)
             # The eigenvectors 'V' form a rotation matrix.
             # We need to convert this 3x3 matrix into a 4D quaternion for the PLY.
-            rotation_matrices = V.detach().cpu().numpy()
-            # Convert to quaternions (scipy uses [x, y, z, w] format)
+            rotation_matrices = V.numpy()
             r = R.from_matrix(rotation_matrices)
             rotations = torch.from_numpy(r.as_quat()).to(gaussians.means.device)
+
             harmonics = gaussians.harmonics[0]
             opacities = gaussians.opacity[0]
             export_ply(
