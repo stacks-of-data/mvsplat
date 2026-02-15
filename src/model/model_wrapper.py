@@ -250,7 +250,7 @@ class ModelWrapper(LightningModule):
             # Extract Rotations (Matrix to Quaternion)
             # The eigenvectors 'V' form a rotation matrix.
             # We need to convert this 3x3 matrix into a 4D quaternion for the PLY.
-            rotation_matrices = V.numpy()
+            rotation_matrices = V.cpu().numpy()
             r = R.from_matrix(rotation_matrices)
             rotations = torch.from_numpy(r.as_quat()).to(gaussians.means.device)
 
