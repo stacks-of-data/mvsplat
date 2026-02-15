@@ -222,41 +222,32 @@ class ModelWrapper(LightningModule):
             )
 
         if self.test_cfg.save_ply:
-            device = torch.device("cpu")
-            extrinsics = batch["target"]["extrinsics"][0, 0]
-            means = gaussians.means[0]
+            # Grab everything needed and move to CPU immediately
+            covs = gaussians.covariances[0].cpu()
+            means = gaussians.means[0].cpu()
+            harmonics = gaussians.harmonics[0].cpu()
+            opacities = gaussians.opacities[0].cpu()
+            extrinsics = batch["target"]["extrinsics"][0, 0].cpu()
 
-            # Process in chunks of 32k to save VRAM
-            chunk_size = 32768
-            num_gaussians = gaussians.covariances.shape[1]
-            all_scales = []
-            all_rotations = []
+            # Add stability epsilon on CPU
+            stable_covs = covs + torch.eye(3) * 1e-6
 
-            for i in range(0, num_gaussians, chunk_size):
-                chunk_covs = gaussians.covariances[0, i:i+chunk_size].to("cpu")
-    
-                # Regularize and decompose on CPU
-                stable_covs = chunk_covs + torch.eye(3) * 1e-6
-                L, V = torch.linalg.eigh(stable_covs)
-    
-                # Calculate scales
-                s = torch.sqrt(torch.clamp(L, min=1e-8))
-    
-                # Fix handedness for SciPy
-                det = torch.linalg.det(V)
-                V[det < 0, :, 2] *= -1
-    
-                # Matrix to Quat via SciPy
-                r = R.from_matrix(V.numpy())
-                all_scales.append(s)
-                all_rotations.append(torch.from_numpy(r.as_quat()).float())
+            # Eigh on CPU (much safer for OOM)
+            L, V = torch.linalg.eigh(stable_covs)
 
-            # Combine results back together
-            scales = torch.cat(all_scales, dim=0).to(means.device)
-            rotations = torch.cat(all_rotations, dim=0).to(means.device)
+            # Math on CPU
+            scales = torch.sqrt(torch.clamp(L, min=1e-8))
+            det = torch.linalg.det(V)
+            
+            flip_mask = det < 0
+            V[flip_mask, :, 2] *= -1
 
-            harmonics = gaussians.harmonics[0]
-            opacities = gaussians.opacities[0]
+            # Conversion (already on CPU, so .numpy() works)
+            rotation_matrices = V.numpy()
+            r = R.from_matrix(rotation_matrices)
+            rotations = torch.from_numpy(r.as_quat()).float()
+
+            # Call export with CPU tensors
             export_ply(
                 extrinsics,
                 means,
@@ -266,6 +257,9 @@ class ModelWrapper(LightningModule):
                 opacities,
                 self.test_cfg.output_path / name / "ply" / f"{scene}_{batch_idx}.ply",
             )
+            
+            # 7. Clean up
+            del covs, L, V, stable_covs
 
         # compute scores
         if self.test_cfg.compute_scores:
