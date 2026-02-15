@@ -226,7 +226,15 @@ class ModelWrapper(LightningModule):
             means = gaussians.means[0]
             # Perform eigendecomposition
             # eigenvalues (L) are the squared scales, eigenvectors (V) are the rotation columns
-            L, V = torch.linalg.eigh(gaussians.covariances[0])
+            covs = gaussians.covariances[0]
+            eye = torch.eye(3, device=covs.device) * 1e-6
+            stable_covs = covs + eye
+
+            # Move to CPU for the decomposition (much more stable than CUDA eigh)
+            L, V = torch.linalg.eigh(stable_covs.to("cpu"))
+
+            # Move back to GPU if needed for further processing
+            L, V = L.to(covs.device), V.to(covs.device)
             scales = torch.sqrt(torch.clamp(L, min=1e-8))
 
             # Extract Rotations (Matrix to Quaternion)
