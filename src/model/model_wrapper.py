@@ -13,6 +13,7 @@ from pytorch_lightning.loggers.wandb import WandbLogger
 from pytorch_lightning.utilities import rank_zero_only
 from torch import Tensor, nn, optim
 import numpy as np
+from scipy.spatial.transform import Rotation as R
 import json
 
 from ..dataset.data_module import get_data_shim
@@ -223,8 +224,18 @@ class ModelWrapper(LightningModule):
         if self.test_cfg.save_ply:
             extrinsics = batch["target"]["extrinsics"][0]
             means = gaussians.means[0]
-            scales = gaussians.scale[0]
-            rotations = gaussians.rotation[0]
+            # Perform eigendecomposition
+            # eigenvalues (L) are the squared scales, eigenvectors (V) are the rotation columns
+            L, V = torch.linalg.eigh(gaussians.covariances[0])
+            scales = torch.sqrt(torch.clamp(L, min=1e-8))
+
+            # Extract Rotations (Matrix to Quaternion)
+            # The eigenvectors 'V' form a rotation matrix.
+            # We need to convert this 3x3 matrix into a 4D quaternion for the PLY.
+            rotation_matrices = V.detach().cpu().numpy()
+            # Convert to quaternions (scipy uses [x, y, z, w] format)
+            r = R.from_matrix(rotation_matrices)
+            rotations = torch.from_numpy(r.as_quat()).to(gaussians.means.device)
             harmonics = gaussians.harmonics[0]
             opacities = gaussians.opacity[0]
             export_ply(
