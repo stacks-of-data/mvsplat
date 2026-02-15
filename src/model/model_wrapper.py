@@ -222,7 +222,7 @@ class ModelWrapper(LightningModule):
 
         if self.test_cfg.save_ply:
             extrinsics = batch["target"]["extrinsics"][0]
-            means = gaussians.mean[0]
+            means = gaussians.means[0]
             scales = gaussians.scale[0]
             rotations = gaussians.rotation[0]
             harmonics = gaussians.harmonics[0]
