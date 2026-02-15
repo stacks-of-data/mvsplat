@@ -224,35 +224,35 @@ class ModelWrapper(LightningModule):
         if self.test_cfg.save_ply:
             extrinsics = batch["target"]["extrinsics"][0, 0]
             means = gaussians.means[0]
-            # Perform eigendecomposition
-            # eigenvalues (L) are the squared scales, eigenvectors (V) are the rotation columns
-            covs = gaussians.covariances[0]
-            eye = torch.eye(3, device=covs.device) * 1e-6
-            stable_covs = covs + eye
 
-            # Move to CPU for the decomposition (much more stable than CUDA eigh)
-            L, V = torch.linalg.eigh(stable_covs.to("cpu"))
+            # Process in chunks of 32k to save VRAM
+            chunk_size = 32768
+            num_gaussians = gaussians.covariances.shape[1]
+            all_scales = []
+            all_rotations = []
 
-            # Move back to GPU for further processing
-            L, V = L.to(covs.device), V.to(covs.device)
-            scales = torch.sqrt(torch.clamp(L, min=1e-8))
+            for i in range(0, num_gaussians, chunk_size):
+                chunk_covs = gaussians.covariances[0, i:i+chunk_size].to("cpu")
+    
+                # Regularize and decompose on CPU
+                stable_covs = chunk_covs + torch.eye(3) * 1e-6
+                L, V = torch.linalg.eigh(stable_covs)
+    
+                # Calculate scales
+                s = torch.sqrt(torch.clamp(L, min=1e-8))
+    
+                # Fix handedness for SciPy
+                det = torch.linalg.det(V)
+                V[det < 0, :, 2] *= -1
+    
+                # Matrix to Quat via SciPy
+                r = R.from_matrix(V.numpy())
+                all_scales.append(s)
+                all_rotations.append(torch.from_numpy(r.as_quat()).float())
 
-            # FIX: Ensure Right-Handed Rotation Matrix
-            # Check the determinant of the eigenvector matrix V
-            # V is [gaussian, 3, 3] where each [3, 3] is the rotation matrix
-            det = torch.linalg.det(V)
-
-            # If determinant is -1, flip the last column to make it a proper rotation
-            # (det < 0) identifies the left-handed cases
-            flip_mask = det < 0
-            V[flip_mask, :, 2] *= -1
-
-            # Extract Rotations (Matrix to Quaternion)
-            # The eigenvectors 'V' form a rotation matrix.
-            # We need to convert this 3x3 matrix into a 4D quaternion for the PLY.
-            rotation_matrices = V.cpu().numpy()
-            r = R.from_matrix(rotation_matrices)
-            rotations = torch.from_numpy(r.as_quat()).to(gaussians.means.device)
+            # Combine results back together
+            scales = torch.cat(all_scales, dim=0)
+            rotations = torch.cat(all_rotations, dim=0)
 
             harmonics = gaussians.harmonics[0]
             opacities = gaussians.opacities[0]
