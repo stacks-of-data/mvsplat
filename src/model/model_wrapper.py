@@ -223,63 +223,69 @@ class ModelWrapper(LightningModule):
 
         if self.test_cfg.save_ply:
             import gc
-            # 1. Clear memory before starting PLY logic
+            # 1. Clear GPU memory forcefully
+            # We must delete the 'output' and 'gaussians' references if they aren't needed
+            del output 
             gc.collect()
             torch.cuda.empty_cache()
 
             with torch.no_grad():
-                # Get dimensions
-                num_gaussians = gaussians.means.shape[1]
-                chunk_size = 32768 # Process in 4 smaller bites
-                
+                # MOVE EVERYTHING TO CPU FIRST
+                # This is the critical step to stop the OOM
+                means_cpu = gaussians.means[0].detach().cpu()
+                harmonics_cpu = gaussians.harmonics[0].detach().cpu()
+                opacities_cpu = gaussians.opacities[0].detach().cpu()
+        
+                # This is the massive one:
+                covs_cpu = gaussians.covariances[0].detach().cpu() 
+        
+                # Now delete the GPU version of gaussians to free VRAM
+                del gaussians
+                torch.cuda.empty_cache()
+
+                num_gaussians = means_cpu.shape[0]
+                chunk_size = 65536 
+        
                 all_scales = []
                 all_rotations = []
-
-                # Move large static tensors to CPU immediately and delete GPU versions if possible
-                means_cpu = gaussians.means[0].cpu()
-                harmonics_cpu = gaussians.harmonics[0].cpu()
-                opacities_cpu = gaussians.opacities[0].cpu()
                 extrinsics_cpu = batch["target"]["extrinsics"][0, 0].cpu()
 
-                for i in range(0, num_gaussians, chunk_size):
-                    # Only move a SMALL slice of covariances to CPU at a time
-                    chunk_covs = gaussians.covariances[0, i : i + chunk_size].cpu()
-                    
-                    # Math on CPU (Stable and OOM-free)
-                    stable_covs = chunk_covs + torch.eye(3) * 1e-6
-                    L, V = torch.linalg.eigh(stable_covs)
-                    s = torch.sqrt(torch.clamp(L, min=1e-8))
-                    
-                    # Handedness fix
-                    det = torch.linalg.det(V)
-                    V[det < 0, :, 2] *= -1
+            for i in range(0, num_gaussians, chunk_size):
+                # Process on CPU
+                chunk_covs = covs_cpu[i : i + chunk_size]
+            
+                # Add small epsilon for numerical stability
+                stable_covs = chunk_covs + torch.eye(3) * 1e-6
+            
+                # L: eigenvalues (scales squared), V: eigenvectors (rotation matrix)
+                L, V = torch.linalg.eigh(stable_covs)
+            
+                # Convert eigenvalues to scales
+                s = torch.sqrt(torch.clamp(L, min=1e-8))
+            
+                # Ensure rotation matrix is right-handed (det=1)
+                det = torch.linalg.det(V)
+                V_fixed = V.clone()
+                V_fixed[det < 0, :, 2] *= -1
 
-                    # Matrix to Quat (SciPy)
-                    r = R.from_matrix(V.numpy())
-                    
-                    all_scales.append(s)
-                    all_rotations.append(torch.from_numpy(r.as_quat()).float())
-                    
-                    # Clean up loop temporaries
-                    del chunk_covs, stable_covs, L, V, det
+                # Convert to Quaternions
+                r = R.from_matrix(V_fixed.numpy())
+            
+                all_scales.append(s)
+                all_rotations.append(torch.from_numpy(r.as_quat()).float())
 
-                # Combine results on CPU
-                scales = torch.cat(all_scales, dim=0)
-                rotations = torch.cat(all_rotations, dim=0)
+        scales = torch.cat(all_scales, dim=0)
+        rotations = torch.cat(all_rotations, dim=0)
 
-                # Final Export
-                export_ply(
-                    extrinsics_cpu,
-                    means_cpu,
-                    scales,
-                    rotations,
-                    harmonics_cpu,
-                    opacities_cpu,
-                    self.test_cfg.output_path / name / "ply" / f"{scene}_{batch_idx}.ply",
-                )
-
-                # Final cleanup
-                del all_scales, all_rotations, means_cpu, harmonics_cpu, opacities_cpu
+        export_ply(
+            extrinsics_cpu,
+            means_cpu,
+            scales,
+            rotations,
+            harmonics_cpu,
+            opacities_cpu,
+            self.test_cfg.output_path / name / "ply" / f"{scene}_{batch_idx}.ply",
+        )
 
         # compute scores
         if self.test_cfg.compute_scores:
