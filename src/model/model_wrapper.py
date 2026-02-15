@@ -222,7 +222,7 @@ class ModelWrapper(LightningModule):
             )
 
         if self.test_cfg.save_ply:
-            extrinsics = batch["target"]["extrinsics"][0]
+            extrinsics = batch["target"]["extrinsics"][0, 0]
             means = gaussians.means[0]
             # Perform eigendecomposition
             # eigenvalues (L) are the squared scales, eigenvectors (V) are the rotation columns
