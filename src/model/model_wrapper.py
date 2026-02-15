@@ -222,6 +222,7 @@ class ModelWrapper(LightningModule):
             )
 
         if self.test_cfg.save_ply:
+            device = torch.device("cpu")
             extrinsics = batch["target"]["extrinsics"][0, 0]
             means = gaussians.means[0]
 
@@ -251,8 +252,8 @@ class ModelWrapper(LightningModule):
                 all_rotations.append(torch.from_numpy(r.as_quat()).float())
 
             # Combine results back together
-            scales = torch.cat(all_scales, dim=0)
-            rotations = torch.cat(all_rotations, dim=0)
+            scales = torch.cat(all_scales, dim=0).to(means.device)
+            rotations = torch.cat(all_rotations, dim=0).to(means.device)
 
             harmonics = gaussians.harmonics[0]
             opacities = gaussians.opacities[0]
